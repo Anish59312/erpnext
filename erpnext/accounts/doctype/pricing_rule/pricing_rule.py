@@ -417,6 +417,7 @@ def get_pricing_rule_for_item(args, doc=None, for_validate=False):
 			"child_docname": args.get("child_docname"),
 		}
 	)
+	
 
 	if args.ignore_pricing_rule or not args.item_code:
 		if frappe.db.exists(args.doctype, args.name) and args.get("pricing_rules"):
@@ -568,22 +569,12 @@ def apply_price_discount_rule(pricing_rule, item_details, args):
 			item_details.margin_rate_or_amount = pricing_rule.margin_rate_or_amount
 
 	if pricing_rule.rate_or_discount == "Rate":
-		pricing_rule_rate = 0.0
-		if pricing_rule.currency == args.currency:
-			pricing_rule_rate = pricing_rule.rate
-
-		# TODO https://github.com/frappe/erpnext/pull/23636 solve this in some other way.
-		if pricing_rule_rate:
+		if pricing_rule.currency == args.currency and pricing_rule.rate > 0:
 			is_blank_uom = pricing_rule.get("uom") != args.get("uom")
-			# Override already set price list rate (from item price)
-			# if pricing_rule_rate > 0
-			item_details.update(
-				{
-					"price_list_rate": pricing_rule_rate
-					* (args.get("conversion_factor", 1) if is_blank_uom else 1),
-				}
+			item_details.price_list_rate = pricing_rule.rate * (
+				args.get("conversion_factor", 1) if is_blank_uom else 1
 			)
-		item_details.update({"discount_percentage": 0.0})
+		item_details.discount_percentage = 0.0
 
 	for apply_on in ["Discount Amount", "Discount Percentage"]:
 		if pricing_rule.rate_or_discount != apply_on:

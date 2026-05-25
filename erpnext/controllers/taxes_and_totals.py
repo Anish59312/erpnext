@@ -164,6 +164,26 @@ class calculate_taxes_and_totals:
 
 		self.doc.conversion_rate = flt(self.doc.conversion_rate)
 
+	def calculate_expected_rate(self, item):
+		price_list_rate = item.price_list_rate
+
+		discount_amount = 0.0
+		if item.discount_percentage > 0:
+			discount_amount = price_list_rate * (item.discount_percentage/100.0)
+		elif item.discount_amount > 0:
+			discount_amount = item.discount_amount
+
+
+		margin_amount = 0
+		if item.margin_type == "Percentage":
+			margin_amount = price_list_rate * (item.margin_rate_or_amount / 100.0)
+		elif item.margin_type == "Amount":
+			margin_amount = item.margin_rate_or_amount
+
+		expected_rate = price_list_rate + margin_amount - discount_amount
+
+		return flt(expected_rate,item.precision("rate")), price_list_rate, margin_amount, discount_amount
+
 	def calculate_item_values(self):
 		if self.doc.get("is_consolidated"):
 			return
@@ -174,54 +194,131 @@ class calculate_taxes_and_totals:
 			for item in self.doc.items:
 				self.doc.round_floats_in(item, do_not_round_fields=do_not_round_fields)
 
-				if item.discount_percentage == 100:
-					item.rate = 0.0
-				elif item.price_list_rate:
-					if not item.rate or (item.pricing_rules and item.discount_percentage > 0):
-						item.rate = flt(
-							item.price_list_rate * (1.0 - (item.discount_percentage / 100.0)),
-							item.precision("rate"),
-						)
+				print("items printed", item.as_dict(), item.price_list_rate, item.pricing_rules)
+				#Condition 1
+				if not item.price_list_rate:
+					# rate is as it was
+					item.rate_with_margin = item.rate
+					item.base_rate_with_margin = flt(item.rate_with_margin) * flt(self.doc.conversion_rate)
+					item.discount_percentage = 0
+					item.discount_amount = 0
+					item.margin_type = "Amount"
+					item.margin_rate_or_amount = 0
 
+				# Condition 2
+				elif item.pricing_rules and not self.doc.ignore_pricing_rule:
+					#get price list rate
+					price_list_rate = item.price_list_rate or 0.0
+
+					# get margin
+					for d in get_applied_pricing_rules(item.pricing_rules):
+						pricing_rule = frappe.get_cached_doc("Pricing Rule", d)
+
+						if pricing_rule.margin_rate_or_amount and (
+							(pricing_rule.currency == self.doc.currency and pricing_rule.margin_type in ["Amount", "Percentage"])
+							or pricing_rule.margin_type == "Percentage"
+						):
+							item.margin_type = pricing_rule.margin_type
+							item.margin_rate_or_amount = pricing_rule.margin_rate_or_amount
+					if item.margin_type == "Percentage":
+						margin_amount = item.price_list_rate * (item.margin_rate_or_amount /100.0)
+					else:
+						margin_amount = item.margin_rate_or_amount
+
+
+					# get discount
+					# following the older code for getting discount
+					if item.discount_percentage > 0:
 						item.discount_amount = item.price_list_rate * (item.discount_percentage / 100.0)
+					elif item.discount_amount:
+						# use discount amount as it is
+						pass
+					discount_amount = item.discount_amount
 
-					elif item.discount_amount and item.pricing_rules:
-						item.rate = item.price_list_rate - item.discount_amount
 
-				if item.doctype in [
-					"Quotation Item",
-					"Sales Order Item",
-					"Delivery Note Item",
-					"Sales Invoice Item",
-					"POS Invoice Item",
-					"Purchase Invoice Item",
-					"Purchase Order Item",
-					"Purchase Receipt Item",
-					"Supplier Quotation Item",
-				]:
-					item.rate_with_margin, item.base_rate_with_margin = self.calculate_margin(item)
-					if flt(item.rate_with_margin) > 0:
-						item.rate = flt(
-							item.rate_with_margin * (1.0 - (item.discount_percentage / 100.0)),
-							item.precision("rate"),
-						)
-# ##############
-						if item.discount_amount and not item.discount_percentage:
-							item.rate = item.rate_with_margin - item.discount_amount
-						elif not item.discount_amount or item.discount_percentage:
-							item.discount_amount = flt(
-								item.rate_with_margin - item.rate, item.precision("discount_amount")
-							)
-# ######### discount amount when margin is not there
-					elif flt(item.price_list_rate) > 0:
-						item.discount_amount = flt(
-							item.price_list_rate - item.rate, item.precision("discount_amount")
-						)
-# #### do this when no discount percentage was mentioned but someone just entered the rate differnt from price list
-				elif flt(item.price_list_rate) > 0 and not item.discount_amount:
-					item.discount_amount = flt(
-						item.price_list_rate - item.rate, item.precision("discount_amount")
-					)
+					item.rate = price_list_rate + margin_amount - discount_amount
+					item.rate_with_margin = price_list_rate + margin_amount
+					item.base_rate_with_margin = flt(item.rate_with_margin) * flt(self.doc.conversion_rate)
+					item.margin_type = "Amount"
+					item.margin_rate_or_amount = margin_amount
+					item.discount_amount = discount_amount
+					item.discount_percentage = flt((discount_amount/price_list_rate)*100, item.precision("discount_percentage"))
+
+				# else priortize rate
+				else:
+					expected_rate, price_list_rate, margin_amount, discount_amount = self.calculate_expected_rate(item)
+					if item.rate > 0 and flt(expected_rate, item.precision("rate")) == flt(item.rate, item.precision("rate")):
+						#one thing we should still reset
+						item.rate_with_margin = price_list_rate + margin_amount
+						#everything else will be the same
+						continue
+					else:
+						# keep item.rate as it is
+						if item.rate >= price_list_rate:
+							margin_amount = flt(item.rate - price_list_rate)
+							discount_amount = 0.0
+						else:
+							margin_amount = 0.0
+							discount_amount = flt(price_list_rate - item.rate)
+
+						item.margin_type = "Amount"
+						item.margin_rate_or_amount = margin_amount
+						item.discount_amount = discount_amount
+						item.discount_percentage = flt(discount_amount / price_list_rate * 100, item.precision("discount_percentage"))
+
+						item.rate_with_margin = price_list_rate + margin_amount
+						item.base_rate_with_margin = item.rate_with_margin * flt(self.doc.conversion_rate)
+
+
+
+# 				if item.discount_percentage == 100:
+# 					item.rate = 0.0
+# 				elif item.price_list_rate:
+# 					if not item.rate or (item.pricing_rules and item.discount_percentage > 0):
+# 						item.rate = flt(
+# 							item.price_list_rate * (1.0 - (item.discount_percentage / 100.0)),
+# 							item.precision("rate"),
+# 						)
+
+# 						item.discount_amount = item.price_list_rate * (item.discount_percentage / 100.0)
+
+# 					elif item.discount_amount and item.pricing_rules:
+# 						item.rate = item.price_list_rate - item.discount_amount
+
+# 				if item.doctype in [
+# 					"Quotation Item",
+# 					"Sales Order Item",
+# 					"Delivery Note Item",
+# 					"Sales Invoice Item",
+# 					"POS Invoice Item",
+# 					"Purchase Invoice Item",
+# 					"Purchase Order Item",
+# 					"Purchase Receipt Item",
+# 					"Supplier Quotation Item",
+# 				]:
+# 					item.rate_with_margin, item.base_rate_with_margin = self.calculate_margin(item)
+# 					if flt(item.rate_with_margin) > 0:
+# 						item.rate = flt(
+# 							item.rate_with_margin * (1.0 - (item.discount_percentage / 100.0)),
+# 							item.precision("rate"),
+# 						)
+# # ##############
+# 						if item.discount_amount and not item.discount_percentage:
+# 							item.rate = item.rate_with_margin - item.discount_amount
+# 						elif not item.discount_amount or item.discount_percentage:
+# 							item.discount_amount = flt(
+# 								item.rate_with_margin - item.rate, item.precision("discount_amount")
+# 							)
+# # ######### discount amount when margin is not there
+# 					elif flt(item.price_list_rate) > 0:
+# 						item.discount_amount = flt(
+# 							item.price_list_rate - item.rate, item.precision("discount_amount")
+# 						)
+# # #### do this when no discount percentage was mentioned but someone just entered the rate differnt from price list
+				# elif flt(item.price_list_rate) > 0 and not item.discount_amount:
+				# 	item.discount_amount = flt(
+				# 		item.price_list_rate - item.rate, item.precision("discount_amount")
+				# 	)
 
 				item.net_rate = item.rate
 
