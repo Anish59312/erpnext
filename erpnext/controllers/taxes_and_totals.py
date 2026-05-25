@@ -197,6 +197,7 @@ class calculate_taxes_and_totals:
 					"Purchase Invoice Item",
 					"Purchase Order Item",
 					"Purchase Receipt Item",
+					"Supplier Quotation Item",
 				]:
 					item.rate_with_margin, item.base_rate_with_margin = self.calculate_margin(item)
 					if flt(item.rate_with_margin) > 0:
@@ -204,18 +205,19 @@ class calculate_taxes_and_totals:
 							item.rate_with_margin * (1.0 - (item.discount_percentage / 100.0)),
 							item.precision("rate"),
 						)
-
+# ##############
 						if item.discount_amount and not item.discount_percentage:
 							item.rate = item.rate_with_margin - item.discount_amount
-						else:
+						elif not item.discount_amount or item.discount_percentage:
 							item.discount_amount = flt(
 								item.rate_with_margin - item.rate, item.precision("discount_amount")
 							)
-
+# ######### discount amount when margin is not there
 					elif flt(item.price_list_rate) > 0:
 						item.discount_amount = flt(
 							item.price_list_rate - item.rate, item.precision("discount_amount")
 						)
+# #### do this when no discount percentage was mentioned but someone just entered the rate differnt from price list
 				elif flt(item.price_list_rate) > 0 and not item.discount_amount:
 					item.discount_amount = flt(
 						item.price_list_rate - item.rate, item.precision("discount_amount")
@@ -1145,14 +1147,9 @@ class calculate_taxes_and_totals:
 					item.margin_type = None
 					item.margin_rate_or_amount = 0.0
 
-			if not item.pricing_rules and flt(item.rate) > flt(item.price_list_rate):
-				item.margin_type = "Amount"
-				item.margin_rate_or_amount = flt(
-					item.rate - item.price_list_rate, item.precision("margin_rate_or_amount")
-				)
-				item.rate_with_margin = item.rate
 
-			elif item.margin_type and item.margin_rate_or_amount:
+
+			if item.margin_type and item.margin_rate_or_amount:
 				margin_value = (
 					item.margin_rate_or_amount
 					if item.margin_type == "Amount"
@@ -1160,6 +1157,15 @@ class calculate_taxes_and_totals:
 				)
 				rate_with_margin = flt(item.price_list_rate) + flt(margin_value)
 				base_rate_with_margin = flt(rate_with_margin) * flt(self.doc.conversion_rate)
+
+			elif flt(item.rate) > flt(item.price_list_rate):
+				item.margin_type = "Amount"
+				item.margin_rate_or_amount = flt(
+					item.rate - item.price_list_rate, item.precision("margin_rate_or_amount")
+				)
+				rate_with_margin = item.rate
+				base_rate_with_margin = flt(rate_with_margin) * flt(self.doc.conversion_rate)
+
 
 		return rate_with_margin, base_rate_with_margin
 
