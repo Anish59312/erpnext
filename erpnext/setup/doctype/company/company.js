@@ -124,7 +124,7 @@ frappe.ui.form.on("Company", {
 			disbale_coa_fields(frm);
 			frappe.contacts.render_address_and_contact(frm);
 
-			if (frappe.perm.has_perm("Cost Center", 0, "read")) {
+			if (frappe.model.can_read("Cost Center")) {
 				frm.add_custom_button(
 					__("Cost Centers"),
 					function () {
@@ -134,7 +134,7 @@ frappe.ui.form.on("Company", {
 				);
 			}
 
-			if (frappe.perm.has_perm("Account", 0, "read")) {
+			if (frappe.model.can_read("Account")) {
 				frm.add_custom_button(
 					__("Chart of Accounts"),
 					function () {
@@ -144,7 +144,7 @@ frappe.ui.form.on("Company", {
 				);
 			}
 
-			if (frappe.perm.has_perm("Sales Taxes and Charges Template", 0, "read")) {
+			if (frappe.model.can_read("Sales Taxes and Charges Template")) {
 				frm.add_custom_button(
 					__("Sales Tax Template"),
 					function () {
@@ -156,7 +156,7 @@ frappe.ui.form.on("Company", {
 				);
 			}
 
-			if (frappe.perm.has_perm("Purchase Taxes and Charges Template", 0, "read")) {
+			if (frappe.model.can_read("Purchase Taxes and Charges Template")) {
 				frm.add_custom_button(
 					__("Purchase Tax Template"),
 					function () {
